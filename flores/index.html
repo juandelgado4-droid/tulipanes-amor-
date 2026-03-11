@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Así mi alma busca tu calor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&display=swap" rel="stylesheet">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#0a0a2a; overflow:hidden; width:100vw; height:100vh; }
+    canvas { position:fixed; top:0; left:0; width:100%; height:100%; display:block; }
+
+    .verse {
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      width: 78%;
+      max-width: 720px;
+      font-family: 'Cormorant Garamond', serif;
+      font-style: italic;
+      font-weight: 300;
+      font-size: clamp(1.1rem, 2.6vw, 1.85rem);
+      color: #f5e6d0;
+      letter-spacing: 0.03em;
+      line-height: 1.75;
+      text-shadow: 0 0 60px rgba(255,130,0,0.40), 0 0 120px rgba(255,80,0,0.15), 0 2px 28px rgba(0,0,0,0.98);
+      opacity: 0;
+      transition: opacity 2.4s ease-in-out;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .verse.visible { opacity: 1; }
+
+    .dots {
+      position:fixed; bottom:22px; left:50%;
+      transform:translateX(-50%);
+      display:flex; gap:9px; z-index:20;
+    }
+    .dot {
+      width:6px; height:6px; border-radius:50%;
+      background:rgba(245,230,208,0.22);
+      transition:all 0.5s; cursor:pointer;
+    }
+    .dot.active { background:rgba(245,230,208,0.88); transform:scale(1.45); }
+
+    .hint {
+      position:fixed; bottom:50px; left:50%;
+      transform:translateX(-50%);
+      color:rgba(245,230,208,0.28);
+      font-family:'Cormorant Garamond',serif;
+      font-style:italic; font-size:0.78rem;
+      letter-spacing:0.16em; z-index:20;
+      transition:opacity 1.5s; white-space:nowrap;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="verse" id="verse"></div>
+  <div class="dots"  id="dots"></div>
+  <div class="hint"  id="hint">toca para continuar · avanza solo</div>
+
+  <script>
+  (function(){
+    var canvas = document.getElementById('c');
+    var ctx = canvas.getContext('2d');
+    var W, H, tulips, needsRebuild = true;
+
+    function resize(){
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      needsRebuild = true;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    function rand(a,b){ return a + Math.random()*(b-a); }
+    function randInt(a,b){ return Math.floor(rand(a,b)); }
+
+    var TULIP_COLORS = [
+      '#cc3030','#e04040','#d03535','#b82828','#e84848',
+      '#e06080','#d05070','#f08090','#e87090','#d0607a',
+      '#c04080','#d050a0','#b83890','#cc48a0','#e060b0',
+      '#f07040','#e08050','#f09060','#e86838','#ff8050',
+      '#8050b0','#a060c0','#7040a0','#9058c0','#b070d0',
+      '#f0a0b0','#f5b0a0','#ffb8a8','#f0b0c0','#e8a0a0'
+    ];
+
+    var STARS = [];
+    for(var i=0; i<45; i++){
+      STARS.push([rand(0.02,0.98), rand(0.02,0.52), rand(0.5,1.5), rand(0.3,1.0)]);
+    }
+
+    /* ── Tulip class ── */
+    function Tulip(forceLayer) {
+      this.x     = rand(-0.03, 1.03);
+      this.layer = forceLayer !== undefined ? forceLayer : rand(0, 1);
+      this.c1    = TULIP_COLORS[randInt(0, TULIP_COLORS.length)];
+      this.c2    = TULIP_COLORS[randInt(0, TULIP_COLORS.length)];
+      this.spd   = rand(0.25, 0.65);
+      this.amp   = rand(2.5, 6.0);
+      this.stemVar = rand(0.85, 1.15);
+      this.petalVar = rand(0.88, 1.12);
+    }
+
+    function buildTulips(){
+      tulips = [];
+      // Adaptive count based on screen width to ensure density
+      var aspect = W / H;
+      var baseCount = 550;
+      // Wider screens need more tulips to fill the field
+      if(aspect > 1.6) baseCount = 850;
+      else if(aspect > 1.2) baseCount = 680;
+
+      // Distribute across depth layers
+      var bgCount  = Math.floor(baseCount * 0.30); // far background - most dense, tiny
+      var mbCount  = Math.floor(baseCount * 0.25);
+      var mfCount  = Math.floor(baseCount * 0.25);
+      var fgCount  = Math.floor(baseCount * 0.20); // foreground - fewer, large
+
+      for(var i=0; i<bgCount; i++)  tulips.push(new Tulip(rand(0.0, 0.20)));
+      for(var i=0; i<mbCount; i++)  tulips.push(new Tulip(rand(0.20, 0.45)));
+      for(var i=0; i<mfCount; i++)  tulips.push(new Tulip(rand(0.45, 0.72)));
+      for(var i=0; i<fgCount; i++)  tulips.push(new Tulip(rand(0.72, 1.0)));
+
+      tulips.sort(function(a,b){ return a.layer - b.layer; });
+      needsRebuild = false;
+    }
+
+    function drawTulip(tl, t) {
+      // Horizon at 45%, field extends down to 94%
+      var horizonY = H * 0.45;
+      var fieldBot = H * 0.94;
+      var py = horizonY + tl.layer * (fieldBot - horizonY);
+      var px = tl.x * W;
+
+      // Scale based on layer — background tiny, foreground big
+      // Use a curve so background is properly small
+      var layerScale = 0.12 + Math.pow(tl.layer, 1.4) * 1.1;
+      var sc = layerScale * (H / 700);
+      
+      // Movimiento rotacional sincronizado - todos se mueven igual
+      // Tulipanes rectos oscilando ±3 grados con velocidad de viento más rápida
+      var rotationAngle = Math.sin(t * 0.75) * (3 * Math.PI / 180);
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(rotationAngle);
+      ctx.scale(sc, sc);
+
+      var stemH = (45 + tl.layer * 50) * tl.stemVar;
+      var pv = tl.petalVar;
+
+      // Stem — dark, thin, recto ahora porque la rotación se aplica al contexto
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.bezierCurveTo(1, -stemH*0.35, 0.5, -stemH*0.65, 0, -stemH);
+      ctx.strokeStyle = '#0e2808';
+      ctx.lineWidth = 2.8;
+      ctx.stroke();
+
+      // Small leaf on some stems
+      if(tl.layer > 0.35 && tl.petalVar > 1.02) {
+        ctx.beginPath();
+        var leafY = -stemH * 0.30;
+        ctx.moveTo(0, leafY);
+        ctx.quadraticCurveTo(14*pv, leafY-12, 4, leafY-24);
+        ctx.quadraticCurveTo(-2, leafY-12, 0, leafY);
+        ctx.fillStyle = '#1a4610';
+        ctx.fill();
+      }
+
+      ctx.translate(0, -stemH);
+
+      // Alpha: farthest tulips more transparent
+      var alpha = 0.30 + tl.layer * 0.70;
+      ctx.globalAlpha = alpha;
+
+      var ps = pv;
+
+      // Back-left petal
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.bezierCurveTo(-28*ps,-12,-32*ps,-35*ps,-24*ps,-72*ps);
+      ctx.bezierCurveTo(-18*ps,-90*ps,-8*ps,-88*ps,0,-65*ps);
+      ctx.fillStyle = tl.c2;
+      ctx.fill();
+
+      // Back-right petal
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.bezierCurveTo(28*ps,-12,32*ps,-35*ps,24*ps,-72*ps);
+      ctx.bezierCurveTo(18*ps,-90*ps,8*ps,-88*ps,0,-65*ps);
+      ctx.fillStyle = tl.c2;
+      ctx.fill();
+
+      ctx.globalAlpha = Math.min(1, alpha + 0.15);
+
+      // Front-left petal
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.bezierCurveTo(-18*ps,-14,-20*ps,-45*ps,-10*ps,-80*ps);
+      ctx.bezierCurveTo(-4*ps,-95*ps,2*ps,-93*ps,0,-65*ps);
+      ctx.fillStyle = tl.c1;
+      ctx.fill();
+
+      // Front-right petal
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.bezierCurveTo(18*ps,-14,20*ps,-45*ps,10*ps,-80*ps);
+      ctx.bezierCurveTo(4*ps,-95*ps,-2*ps,-93*ps,0,-65*ps);
+      ctx.fillStyle = tl.c1;
+      ctx.fill();
+
+      // Center petal (top front) - makes it more tulip-like
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.bezierCurveTo(-10*ps,-18,-12*ps,-55*ps,0,-88*ps);
+      ctx.bezierCurveTo(12*ps,-55*ps,10*ps,-18,0,0);
+      ctx.fillStyle = tl.c1;
+      ctx.globalAlpha = Math.min(1, alpha + 0.20);
+      ctx.fill();
+
+      // Center highlight - inner glow
+      ctx.beginPath();
+      ctx.moveTo(-6*ps,0);
+      ctx.bezierCurveTo(-8*ps,-20,-10*ps,-60*ps,-2*ps,-85*ps);
+      ctx.bezierCurveTo(4*ps,-65*ps,6*ps,-25,6*ps,0);
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.fill();
+
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    /* ── Mountain ridge ── */
+    function drawRidge() {
+      var ry = H * 0.45;
+      ctx.beginPath();
+
+      var pts = [
+        [0.00, 0.000],[0.04,-0.006],[0.08,-0.003],[0.12,-0.010],
+        [0.16,-0.005],[0.20,-0.014],[0.24,-0.008],[0.28,-0.016],
+        [0.32,-0.010],[0.36,-0.006],[0.40,-0.012],[0.44,-0.004],
+        [0.48,-0.010],[0.52,-0.015],[0.56,-0.007],[0.60,-0.012],
+        [0.64,-0.005],[0.68,-0.016],[0.72,-0.008],[0.76,-0.018],
+        [0.80,-0.010],[0.84,-0.006],[0.88,-0.013],[0.92,-0.005],
+        [0.96,-0.009],[1.00, 0.000]
+      ];
+
+      ctx.moveTo(0, ry);
+      for(var i=0; i<pts.length; i++){
+        var px = pts[i][0]*W;
+        var py = ry + pts[i][1]*H;
+        if(i===0) ctx.moveTo(px, py);
+        else {
+          var prev = pts[i-1];
+          var ppx = prev[0]*W, ppy = ry + prev[1]*H;
+          ctx.quadraticCurveTo(ppx, ppy, (ppx+px)/2, (ppy+py)/2);
+        }
+      }
+      ctx.lineTo(W, ry + H*0.03);
+      ctx.lineTo(W, ry + H*0.05);
+      ctx.lineTo(0, ry + H*0.05);
+      ctx.closePath();
+
+      ctx.fillStyle = '#040802';
+      ctx.fill();
+    }
+
+    /* ── Scene ── */
+    function drawScene(t) {
+      var horizonPct = 0.45;
+
+      // Sky
+      var sky = ctx.createLinearGradient(0, 0, 0, H * horizonPct);
+      sky.addColorStop(0,    '#08061e');
+      sky.addColorStop(0.12, '#0c0828');
+      sky.addColorStop(0.28, '#160a38');
+      sky.addColorStop(0.42, '#280a48');
+      sky.addColorStop(0.55, '#3c0a4a');
+      sky.addColorStop(0.68, '#5a1050');
+      sky.addColorStop(0.78, '#7a1848');
+      sky.addColorStop(0.86, '#a02838');
+      sky.addColorStop(0.93, '#c04028');
+      sky.addColorStop(1,    '#d85020');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H * horizonPct + 2);
+
+      // Warm radial glow around sun area in sky
+      var sunX = W * 0.52, sunY = H * horizonPct;
+      var hg = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, W*0.45);
+      hg.addColorStop(0,   'rgba(255,120,20,0.28)');
+      hg.addColorStop(0.2, 'rgba(220,60,10,0.16)');
+      hg.addColorStop(0.45,'rgba(150,20,40,0.07)');
+      hg.addColorStop(1,   'rgba(60,10,40,0)');
+      ctx.fillStyle = hg;
+      ctx.fillRect(0, H*0.15, W, H*0.32);
+
+      // Secondary warm band at horizon
+      var hg2 = ctx.createLinearGradient(0, H*0.35, 0, H*horizonPct);
+      hg2.addColorStop(0,   'rgba(180,30,10,0)');
+      hg2.addColorStop(0.6, 'rgba(200,50,10,0.15)');
+      hg2.addColorStop(1,   'rgba(220,80,10,0.28)');
+      ctx.fillStyle = hg2;
+      ctx.fillRect(0, H*0.35, W, H*0.10);
+
+      // Stars
+      for(var s=0; s<STARS.length; s++){
+        var st = STARS[s];
+        var twk = 0.20 + 0.80*Math.abs(Math.sin(t*0.4*st[2] + st[0]*12 + st[1]*8));
+        var horizFade = 1.0 - Math.max(0, (st[1] - 0.32) / 0.20);
+        horizFade = Math.max(0, Math.min(1, horizFade));
+        ctx.globalAlpha = twk * st[3] * 0.60 * horizFade;
+        ctx.fillStyle = '#fffde8';
+        ctx.beginPath();
+        ctx.arc(st[0]*W, st[1]*H*horizonPct/0.52, 1.0 + st[3]*0.4, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      // ── Sun ──
+      var sunR = H * 0.065;
+
+      // Outermost glow
+      var g0 = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, W*0.30);
+      g0.addColorStop(0,    'rgba(255,130,10,0.32)');
+      g0.addColorStop(0.12, 'rgba(230,70,5,0.20)');
+      g0.addColorStop(0.30, 'rgba(180,30,20,0.10)');
+      g0.addColorStop(0.55, 'rgba(120,10,50,0.04)');
+      g0.addColorStop(1,    'rgba(60,0,40,0)');
+      ctx.fillStyle = g0;
+      ctx.beginPath(); ctx.arc(sunX, sunY, W*0.30, 0, Math.PI*2); ctx.fill();
+
+      // Mid glow
+      var g1 = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, W*0.14);
+      g1.addColorStop(0,    'rgba(255,160,30,0.50)');
+      g1.addColorStop(0.3,  'rgba(255,100,10,0.28)');
+      g1.addColorStop(0.6,  'rgba(200,40,5,0.12)');
+      g1.addColorStop(1,    'rgba(150,10,30,0)');
+      ctx.fillStyle = g1;
+      ctx.beginPath(); ctx.arc(sunX, sunY, W*0.14, 0, Math.PI*2); ctx.fill();
+
+      // Sun disc
+      var g2 = ctx.createRadialGradient(sunX, sunY-2, sunR*0.08, sunX, sunY, sunR);
+      g2.addColorStop(0,    '#fff8d0');
+      g2.addColorStop(0.10, '#ffdd40');
+      g2.addColorStop(0.30, '#ffaa00');
+      g2.addColorStop(0.55, '#ff6600');
+      g2.addColorStop(0.80, '#dd2800');
+      g2.addColorStop(1,    '#aa1500');
+      ctx.fillStyle = g2;
+      ctx.beginPath(); ctx.arc(sunX, sunY, sunR, 0, Math.PI*2); ctx.fill();
+
+      // Sun inner core
+      var g3 = ctx.createRadialGradient(sunX, sunY-1, 0, sunX, sunY, sunR*0.40);
+      g3.addColorStop(0,   'rgba(255,255,240,0.55)');
+      g3.addColorStop(0.5, 'rgba(255,240,180,0.22)');
+      g3.addColorStop(1,   'rgba(255,200,100,0)');
+      ctx.fillStyle = g3;
+      ctx.beginPath(); ctx.arc(sunX, sunY, sunR*0.40, 0, Math.PI*2); ctx.fill();
+
+      // ── Ground ──
+      var gnd = ctx.createLinearGradient(0, H*horizonPct, 0, H);
+      gnd.addColorStop(0,    '#080e04');
+      gnd.addColorStop(0.08, '#0a1406');
+      gnd.addColorStop(0.25, '#081005');
+      gnd.addColorStop(0.55, '#060c03');
+      gnd.addColorStop(1,    '#030802');
+      ctx.fillStyle = gnd;
+      ctx.fillRect(0, H*horizonPct, W, H*(1-horizonPct));
+
+      // Warm light on ground near sun
+      var gg = ctx.createRadialGradient(sunX, H*horizonPct, 0, sunX, H*(horizonPct+0.08), W*0.30);
+      gg.addColorStop(0,   'rgba(80,25,5,0.22)');
+      gg.addColorStop(0.4, 'rgba(40,12,3,0.10)');
+      gg.addColorStop(1,   'rgba(10,5,2,0)');
+      ctx.fillStyle = gg;
+      ctx.fillRect(0, H*horizonPct, W, H*0.20);
+
+      // Ridge
+      drawRidge();
+
+      // ── Tulips ──
+      if(needsRebuild) buildTulips();
+      for(var i=0; i<tulips.length; i++) drawTulip(tulips[i], t);
+
+      // ── Foliage base — subtle, covers lower stems ──
+      var gb = H * 0.92;
+      var lg = ctx.createLinearGradient(0, gb - H*0.05, 0, H);
+      lg.addColorStop(0,    'rgba(5,12,3,0)');
+      lg.addColorStop(0.06, 'rgba(8,18,5,0.20)');
+      lg.addColorStop(0.14, 'rgba(10,22,6,0.55)');
+      lg.addColorStop(0.25, 'rgba(8,18,4,0.85)');
+      lg.addColorStop(0.40, 'rgba(6,14,3,0.95)');
+      lg.addColorStop(0.60, 'rgba(4,10,2,0.98)');
+      lg.addColorStop(1,    'rgba(3,7,2,1)');
+      ctx.fillStyle = lg;
+      ctx.fillRect(0, gb - H*0.05, W, H-(gb-H*0.05));
+
+      // Bottom edge
+      ctx.fillStyle = '#020502';
+      ctx.fillRect(0, H*0.97, W, H*0.03);
+    }
+
+    var sceneTime = 0;
+    function loop(){
+      requestAnimationFrame(loop);
+      sceneTime += 0.012;
+      ctx.clearRect(0,0,W,H);
+      drawScene(sceneTime);
+    }
+    buildTulips();
+    loop();
+  })();
+  </script>
+
+  <script>
+  (function(){
+    var POEM = [
+      "Tengo claro que eres el amor de mi vida.",
+      "Desde que llegaste, todo cambió para mí.",
+      "El tiempo que llevo conociéndote\nha sido lo mejor que me ha pasado.",
+      "Cada momento contigo\nse vuelve un recuerdo hermoso.",
+      "Te adoro más de lo que imaginas.",
+      "Tu cariño llena mi corazón.",
+      "Gracias por estar en mi vida.",
+      "Y recuerda siempre: estaré para ti. 💙"
+    ];
+
+    var verseEl = document.getElementById('verse');
+    var dotsEl  = document.getElementById('dots');
+    var hintEl  = document.getElementById('hint');
+    var current = 0, busy = false;
+
+    for(var i=0; i<POEM.length; i++){
+      (function(idx){
+        var dot = document.createElement('div');
+        dot.className = 'dot'+(idx===0?' active':'');
+        dot.addEventListener('click', function(e){ e.stopPropagation(); goTo(idx); });
+        dotsEl.appendChild(dot);
+      })(i);
+    }
+
+    function goTo(index){
+      if(busy) return;
+      busy = true;
+      verseEl.classList.remove('visible');
+      setTimeout(function(){
+        current = index;
+        var dots = dotsEl.querySelectorAll('.dot');
+        for(var d=0; d<dots.length; d++) dots[d].classList.toggle('active', d===current);
+        verseEl.innerHTML = POEM[current].replace(/\n/g,'<br>');
+        verseEl.classList.add('visible');
+        busy = false;
+      }, 2500);
+    }
+
+    function nextVerse(){ goTo((current+1) % POEM.length); }
+
+    verseEl.innerHTML = POEM[0].replace(/\n/g,'<br>');
+    setTimeout(function(){ verseEl.classList.add('visible'); }, 400);
+
+    var timer = setInterval(nextVerse, 7000);
+    document.addEventListener('click', function(){
+      clearInterval(timer);
+      nextVerse();s
+      timer = setInterval(nextVerse, 7000);
+    });
+
+    setTimeout(function(){ hintEl.style.opacity='0'; }, 5000);
+  })();
+  </script>
+</body>
+</html>
